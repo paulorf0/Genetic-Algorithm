@@ -1,12 +1,17 @@
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 
-template <typename T> using DNA = std::vector<T>;
+inline std::random_device rd;
+inline std::mt19937 gen(rd());
 
+template <typename T> using DNA = std::vector<T>;
 template <typename T> struct Gene {
   DNA<T> dna;
   double fitness = 0.0;
@@ -19,13 +24,21 @@ template <typename T> struct Gene {
 template <typename T> using Population = std::vector<Gene<T>>;
 template <typename T> using eval = const std::function<double(const DNA<T> &)>;
 template <typename T> using gen_rule = const std::function<DNA<T>()>;
+template <typename T> using mut_rule = const std::function<void(T &)>;
+template <typename T>
+using ParentPair = std::pair<const Gene<T> &, const Gene<T> &>;
+template <typename T>
+using tournament_rule =
+    const std::function<ParentPair<T>(const Population<T> &)>;
+// tournament_rule <- return parents and receive the population that occur
+// tournament.
 
 /*
  * N = Population Size
  * M = DNA size
  */
 template <typename T>
-Population<T> initial_pop(const int N, gen_rule<T> &generation_rule) {
+Population<T> initial_pop(const int N, const gen_rule<T> &generation_rule) {
   Population<T> pop;
 
   for (auto i = 0; i < N; i++) {
@@ -42,7 +55,7 @@ Population<T> initial_pop(const int N, gen_rule<T> &generation_rule) {
 
 template <typename T> double fitness(Gene<T> &gene, const eval<T> &evaluator) {
 
-  gene.fitness = evaluator(&gene.dna);
+  gene.fitness = evaluator(gene.dna);
 
   return gene.fitness;
 }
@@ -61,8 +74,7 @@ std::vector<Gene<T>> selection(int N, const std::vector<Gene<T>> &pop) {
   double total_fitness = 0.0;
 
   for (const auto &gene : pop) {
-    const auto fit = gene.fitness;
-    total_fitness += fit;
+    total_fitness += gene.fitness;
   }
 
   if (total_fitness <= 0.0) {
@@ -71,8 +83,6 @@ std::vector<Gene<T>> selection(int N, const std::vector<Gene<T>> &pop) {
     return {};
   }
 
-  std::random_device rd;
-  std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0.0, total_fitness);
 
   for (auto i = 0; i < N; i++) {
@@ -89,6 +99,10 @@ std::vector<Gene<T>> selection(int N, const std::vector<Gene<T>> &pop) {
     }
   }
 
+  std::sort(
+      selected_genes.begin(), selected_genes.end(),
+      [](const Gene<T> &a, const Gene<T> &b) { return a.fitness > b.fitness; });
+
   return selected_genes;
 }
 
@@ -104,11 +118,8 @@ Gene<T> crossover(const Gene<T> &parentA, const Gene<T> &parentB) {
   Gene<T> child;
   child.generation = parentA.generation + 1;
   child.dna.reserve(size);
-  // child.id = ??
 
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_real_distribution<> dis(0, size - 1);
+  std::uniform_int_distribution<> dis(0, size - 1);
 
   const auto midpoint = dis(gen);
   for (auto i = 0; i < size; i++) {
@@ -122,47 +133,102 @@ Gene<T> crossover(const Gene<T> &parentA, const Gene<T> &parentB) {
   return child;
 }
 
-template <typename T> void mutate(DNA<T> &dna, double mut) {
-  std::random_device rd;
-  std::mt19937 gen(rd());
+template <typename T>
+void mutate(DNA<T> &dna, const mut_rule<T> &rule, double mut) {
   std::uniform_real_distribution<> uniform_dist(0.0, 1.0);
-  std::normal_distribution<> d(0, 0.1);
 
   for (auto i = 0; i < dna.size(); i++) {
     if (uniform_dist(gen) < mut) {
-      dna[i] += d(gen);
+      rule(dna[i]);
     }
   }
 }
 
 template <typename T>
-void create_next_generation(Population<T> &pop, const Population<T> &best_genes,
-                            double mut) {
+void create_next_generation(Population<T> &new_pop,
+                            const Population<T> &old_pop,
+                            const Population<T> &best_genes,
+                            const mut_rule<T> &mutation_rule, double mut,
+                            const tournament_rule<T> tm_rule) {
   if (mut < 0 || mut > 1) {
     std::cerr << "Warning: mut is lower that 0 or bigger than 1" << std::endl;
     return;
   }
 
-  const int generation = pop[0].generation + 1;
-  const int diff = pop.size() - best_genes.size();
+  const int generation = old_pop[0].generation + 1;
+
+  // pop.size() = 50
+  // best.size() = 5
+  // fill: 0 - 4
+  // missing: best.size() .. pop.size()
 
   for (auto i = 0; i < best_genes.size(); i++) {
-    pop[i] = best_genes[i];
-    pop[i].generation = generation;
+    new_pop[i] = best_genes[i];
+    new_pop[i].generation = generation;
+    new_pop[i].id = i;
   }
 
-  std::random_device rd;
-  std::mt19937 gen(rd());
+  for (auto i = best_genes.size(); i < old_pop.size(); i++) {
+    const auto &[parentA, parentB] = tm_rule(old_pop);
+    auto child = crossover(parentA, parentB);
 
-  for (auto i = diff; i < pop.size(); i++) {
+    mutate(child.dna, mutation_rule, mut);
 
-    const int parentA_idx = gen() % best_genes.size();
-    const int parentB_idx = gen() % best_genes.size();
-
-    auto child = crossover(best_genes[parentA_idx], best_genes[parentB_idx]);
-
-    mutate(child.dna, mut);
-
-    pop[i] = child;
+    child.id = i;
+    new_pop[i] = child;
   }
 }
+
+template <typename T> std::string debug(const Gene<T> &g) {
+  std::ostringstream debug;
+  std::ostringstream dna;
+
+  if (!g.dna.empty()) {
+    dna << '(';
+    for (auto i = 0; i < g.dna.size() - 1; i++) {
+      dna << "'" << g.dna[i] << "' ";
+    }
+
+    dna << "'" << g.dna.back() << "')";
+  } else {
+    dna << "Nothing";
+  }
+
+  debug << "Fitness: " << g.fitness << "\n"
+        << "Id: " << g.id << "\n"
+        << "Dna: " << dna.str() << "\n";
+
+  return debug.str();
+}
+
+namespace Rules {
+namespace Tournament {
+
+template <typename T> tournament_rule<T> Tournament_K_best(int K) {
+  return [K](const Population<T> &pop) -> ParentPair<T> {
+    if (pop.empty())
+      throw std::runtime_error(
+          "Error: Population is Empty - Tournament_K_best");
+    std::uniform_int_distribution<> dis(0, pop.size() - 1);
+
+    auto pick_one = [&]() -> const Gene<T> & {
+      int best_idx = dis(gen);
+
+      for (int i = 0; i < K; i++) {
+        int idx = dis(gen);
+        if (pop[idx].fitness > pop[best_idx].fitness)
+          best_idx = idx;
+      }
+
+      return pop[best_idx];
+    };
+
+    return {pick_one(), pick_one()};
+  };
+}
+
+} // namespace Tournament
+
+namespace Mutation {}
+
+} // namespace Rules
