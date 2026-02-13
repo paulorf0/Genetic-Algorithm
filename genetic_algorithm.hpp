@@ -25,17 +25,14 @@ template <typename T> using gen_rule = const std::function<DNA<T>()>;
  * M = DNA size
  */
 template <typename T>
-Population<T> initial_pop(const int N, const int M,
-                          gen_rule<T> &generation_rule) {
+Population<T> initial_pop(const int N, gen_rule<T> &generation_rule) {
   Population<T> pop;
 
   for (auto i = 0; i < N; i++) {
     Gene<T> gene;
-    for (auto j = 0; j < M; j++) {
-      gene.dna = generation_rule();
-      gene.generation = 0;
-      gene.id = i;
-    }
+    gene.dna = generation_rule();
+    gene.generation = 0;
+    gene.id = i;
 
     pop.push_back(gene);
   }
@@ -43,8 +40,7 @@ Population<T> initial_pop(const int N, const int M,
   return pop;
 }
 
-template <typename T>
-double fitness(const Gene<T> &gene, const eval<T> &evaluator) {
+template <typename T> double fitness(Gene<T> &gene, const eval<T> &evaluator) {
 
   gene.fitness = evaluator(&gene.dna);
 
@@ -98,21 +94,24 @@ std::vector<Gene<T>> selection(int N, const std::vector<Gene<T>> &pop) {
 
 template <typename T>
 Gene<T> crossover(const Gene<T> &parentA, const Gene<T> &parentB) {
-  if (parentA.dna.size() != parentA.dna.size()) {
+  if (parentA.dna.size() != parentB.dna.size()) {
     std::cerr << "ParentA and ParentB size mismatch" << std::endl;
     return {};
   }
 
+  const auto size = parentA.dna.size();
+
   Gene<T> child;
   child.generation = parentA.generation + 1;
-  child.dna.reserve(parentA.dna.size());
+  child.dna.reserve(size);
   // child.id = ??
 
   std::random_device rd;
   std::mt19937 gen(rd());
+  std::uniform_real_distribution<> dis(0, size - 1);
 
-  const auto midpoint = gen() % parentA.size();
-  for (auto i = 0; i < parentA.dna.size(); i++) {
+  const auto midpoint = dis(gen);
+  for (auto i = 0; i < size; i++) {
     if (i <= midpoint) {
       child.dna.push_back(parentA.dna[i]);
     } else {
@@ -162,7 +161,7 @@ void create_next_generation(Population<T> &pop, const Population<T> &best_genes,
 
     auto child = crossover(best_genes[parentA_idx], best_genes[parentB_idx]);
 
-    mutate(&child.dna, mut);
+    mutate(child.dna, mut);
 
     pop[i] = child;
   }
