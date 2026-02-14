@@ -2,6 +2,8 @@
 #include <string>
 
 #include "genetic_algorithm.hpp"
+#include "neural_network.hpp"
+
 /*
  * Test:
  *   target = 'testando algoritmo'
@@ -61,7 +63,7 @@ int main() {
   };
 
   const int N = 50;
-  const double accept = 1.5;
+  const double accept = 2.0;
   const double mut = 0.015;
   const int epoch = 5000;
   int i = epoch;
@@ -93,5 +95,7 @@ int main() {
   }
 
   auto debug_gene = debug(elites[0]);
-  std::cout << "Final: \n" << "Epoch: " << epoch - i << std::endl << debug_gene;
+  std::cout << "Final: \n"
+            << "Epoch: " << epoch - i << std::endl
+            << debug_gene;
 }
